@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Power Map Analyzer — MidwestParts Co.</title>
+
+<!-- =================== STYLE (the CSS box) =================== -->
+<style>
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f6f7f9;
+    color: #1f2933;
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .subtitle { color: #66737f; margin: 0 0 20px; font-size: 14px; }
+
+  #map {
+    width: 100%;
+    max-width: 900px;
+    aspect-ratio: 3 / 2;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+    background: #ffffff;
+    border: 1px solid #e3e8ee;
+    border-radius: 12px;
+  }
+  .legend { font-size: 12px; color: #66737f; max-width: 900px; margin: 12px auto 0; }
+
+  .panels { display: flex; flex-wrap: wrap; gap: 20px; max-width: 900px; margin: 20px auto 0; }
+  .panel {
+    flex: 1; min-width: 240px;
+    background: #ffffff; border: 1px solid #e3e8ee;
+    border-radius: 12px; padding: 16px 20px;
+  }
+  .panel h2 { font-size: 15px; margin: 0 0 12px; }
+  .row {
+    display: flex; justify-content: space-between;
+    padding: 6px 0; border-bottom: 1px solid #f0f2f5; font-size: 14px;
+  }
+  .row:last-child { border-bottom: none; }
+  .score { font-weight: 600; }
+  .reason { color: #66737f; font-size: 12px; font-style: italic; padding: 0 0 4px; }
+  .risk { color: #c0392b; font-size: 14px; padding: 6px 0; }
+</style>
+</head>
+
+<body>
+  <!-- =================== STRUCTURE (the HTML box) =================== -->
+  <h1>Power Map Analyzer</h1>
+  <p class="subtitle">Stakeholder leverage &amp; risk — MidwestParts Co. ($300M diligence)</p>
+
+  <svg id="map" viewBox="0 0 900 600" xmlns="http://www.w3.org/2000/svg"></svg>
+
+  <p class="legend">
+    Node size &amp; color = power score (0–10). &nbsp;
+    Red dashed ring = chokepoint (single point of failure). &nbsp;
+    Arrow points toward the party that holds the power.
+  </p>
+
+  <div class="panels">
+    <div class="panel" id="ranking"><h2>Power ranking</h2></div>
+    <div class="panel" id="risks"><h2>&#9888; Risk register (chokepoints)</h2></div>
+  </div>
+
+<!-- =================== LOGIC (the JavaScript box) =================== -->
+<script>
+// ========================================================
+//  THE ENGINE  (Steps 4–6, exactly as we built them)
+// ========================================================
+const ALPHA = 0.6;   // blend weight: multiply-view vs add-view
+const DECAY = 0.7;   // diminishing-returns factor
+
+const company = "MidwestParts Co.";
+
+// one dependency per stakeholder: the company depends on each of these
+const edges = [
+  { to: "Alloy Supplier",        strength: 5, irreplaceability: 5, chokepoint: true  },
+  { to: "Anchor Customer",       strength: 5, irreplaceability: 4, chokepoint: true  },
+  { to: "Plant Manager",         strength: 4, irreplaceability: 5, chokepoint: true  },
+  { to: "Commodity Bolt Vendor", strength: 5, irreplaceability: 1, chokepoint: false },
+  { to: "Regional Logistics",    strength: 2, irreplaceability: 2, chokepoint: false }
+];
+
+function leverage(edge) {
+  const multiplyView = Math.sqrt(edge.strength * edge.irreplaceability);
+  const addView = (edge.strength + edge.irreplaceability) / 2;
+  let score = ALPHA * multiplyView + (1 - ALPHA) * addView;
+  if (edge.chokepoint) score = score * 1.25;
+  return score;
+}
+
+function nodePower(nodeName) {
+  let scores = [];
+  for (const e of edges) {
+    if (e.to === nodeName) scores.push(leverage(e));
+  }
+  scores.sort(function(a, b) { return b - a; });
+  let total = 0;
+  for (let i = 0; i < scores.length; i++) {
+    total = total + scores[i] * Math.pow(DECAY, i);
+  }
+  return { power: total, count: scores.length };
+}
+
+function normalizePowers(nodeNames) {
+  let raw = [];
+  for (const name of nodeNames) {
+    const np = nodePower(name);
+    raw.push({ name: name, rawPower: np.power, count: np.count });
+  }
+  let max = 0;
+  for (const r of raw) { if (r.rawPower > max) max = r.rawPower; }
+  for (const r of raw) { r.score = (r.rawPower / max) * 10; }
+  return raw;
+}
+
+const overrides = {
+  "Alloy Supplier": { adjust: +0.5, reason: "supplier's country just imposed export controls" }
+};
+function applyOverride(node) {
+  const o = overrides[node.name];
+  if (o) { node.score = node.score + o.adjust; node.overrideReason = o.reason; }
+  return node;
+}
+
+function riskRegister() {
+  let risks = [];
+  for (const e of edges) {
+    if (e.chokepoint && risks.indexOf(e.to) === -1) risks.push(e.to);
+  }
+  return risks;
+}
+
+// build the list of scored stakeholder nodes
+const nodeNames = [];
+for (const e of edges) {
+  if (nodeNames.indexOf(e.to) === -1) nodeNames.push(e.to);
+}
+let nodes = normalizePowers(nodeNames);
+for (const n of nodes) applyOverride(n);
+
+
+// ========================================================
+//  THE DRAWING  (Step 7 — the new part)
+// ========================================================
+
+// choose a node's fill color by its power score (deeper = more power)
+function powerColor(score) {
+  if (score >= 8) return "#0b3d5c";
+  if (score >= 6) return "#1f6f8b";
+  if (score >= 4) return "#3fa0b5";
+  return "#9ec9d3";
+}
+
+// is this stakeholder a chokepoint? (look it up in the edges)
+function isChokepoint(name) {
+  for (const e of edges) { if (e.to === name && e.chokepoint) return true; }
+  return false;
+}
+
+// place the company in the center and the stakeholders evenly around a circle
+const centerX = 450, centerY = 300, ringRadius = 200;
+for (let i = 0; i < nodes.length; i++) {
+  const angle = (-90 + i * (360 / nodes.length)) * Math.PI / 180; // spread them out
+  nodes[i].x = centerX + ringRadius * Math.cos(angle);
+  nodes[i].y = centerY + ringRadius * Math.sin(angle);
+}
+
+let svg = "";
+
+// arrowhead definition (used by the lines below)
+svg += `<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#b3bcc6"></path>
+  </marker>
+</defs>`;
+
+// 1. dependency arrows (drawn first, so nodes sit on top)
+for (const n of nodes) {
+  svg += `<line x1="${centerX}" y1="${centerY}" x2="${n.x}" y2="${n.y}"
+            stroke="#cdd5dd" stroke-width="2" marker-end="url(#arrow)"></line>`;
+}
+
+// 2. the central company node (the subject of the analysis)
+svg += `<circle cx="${centerX}" cy="${centerY}" r="46" fill="#1f2933"></circle>`;
+svg += `<text x="${centerX}" y="${centerY - 2}" text-anchor="middle" fill="#ffffff"
+          font-size="13" font-weight="600">${company.split(" ")[0]}</text>`;
+svg += `<text x="${centerX}" y="${centerY + 14}" text-anchor="middle" fill="#aeb8c2"
+          font-size="11">(subject)</text>`;
+
+// 3. each stakeholder node: size = power, color = power, red ring = risk
+for (const n of nodes) {
+  const radius = 18 + n.score * 2.6;          // bigger circle = more power
+  const fill = powerColor(n.score);
+
+  if (isChokepoint(n.name)) {                  // fragility shown SEPARATELY from power
+    svg += `<circle cx="${n.x}" cy="${n.y}" r="${radius + 6}" fill="none"
+              stroke="#c0392b" stroke-width="2.5" stroke-dasharray="4 3"></circle>`;
+  }
+  svg += `<circle cx="${n.x}" cy="${n.y}" r="${radius}" fill="${fill}"></circle>`;
+  svg += `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" fill="#ffffff"
+            font-size="14" font-weight="600">${n.score.toFixed(1)}</text>`;
+  svg += `<text x="${n.x}" y="${n.y + radius + 18}" text-anchor="middle" fill="#1f2933"
+            font-size="12">${n.name}</text>`;
+}
+
+document.getElementById("map").innerHTML = svg;
+
+
+// ========================================================
+//  THE PANELS  (power ranking + risk register)
+// ========================================================
+
+// power ranking, sorted high -> low
+let ranked = nodes.slice().sort(function(a, b) { return b.score - a.score; });
+let rankHtml = "";
+for (const n of ranked) {
+  rankHtml += `<div class="row"><span>${n.name}</span><span class="score">${n.score.toFixed(1)}</span></div>`;
+  if (n.overrideReason) rankHtml += `<div class="reason">override: ${n.overrideReason}</div>`;
+}
+document.getElementById("ranking").innerHTML += rankHtml;
+
+// risk register (chokepoints), kept separate from power
+let riskHtml = "";
+for (const name of riskRegister()) {
+  riskHtml += `<div class="risk">&#9888; ${name} — single point of failure</div>`;
+}
+document.getElementById("risks").innerHTML += riskHtml;
+</script>
+</body>
+</html>

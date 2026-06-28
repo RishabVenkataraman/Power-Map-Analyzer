@@ -2,7 +2,7 @@
 
 **An interactive tool that maps any company's stakeholders by leverage and risk — built to systematize the stakeholder analysis behind operational due diligence.**
 
-🔗 **Live demo:** `https://RishabVenkataraman.github.io/power-map`  
+🔗 **Live demo:** https://github.com/RishabVenkataraman/Power-Map-Analyzer 
 
 ---
 
